@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bill Generator</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- Fallback Google Fonts <link> is injected by app.js only if local fonts fail (see design §10). -->
+</head>
+<body class="paper-a5">
+  <header class="toolbar" id="toolbar">
+    <div class="toolbar-brand">
+      <span class="brand-mark" aria-hidden="true">🧾</span>
+      <h1>Bill Generator</h1>
+    </div>
+
+    <div class="toolbar-controls">
+      <div class="seg" role="group" aria-label="Bill style">
+        <button type="button" class="seg-btn" id="modeHandwritten" aria-pressed="true">Handwritten</button>
+        <button type="button" class="seg-btn" id="modeComputerized" aria-pressed="false">Computerized</button>
+      </div>
+
+      <label class="field-inline">
+        <span class="visually-hidden">Paper size</span>
+        <select id="paperSize" aria-label="Paper size">
+          <option value="A5" selected>A5</option>
+          <option value="A4">A4</option>
+        </select>
+      </label>
+
+      <label class="check-inline" title="Increase the bill number automatically on New bill">
+        <input type="checkbox" id="autoIncrement" checked>
+        <span>Auto bill no.</span>
+      </label>
+    </div>
+
+    <div class="toolbar-actions">
+      <button type="button" class="btn btn-ghost" id="rerollBtn" title="Re-roll the handwriting look (new seed)">Re-roll look</button>
+      <button type="button" class="btn btn-ghost" id="newBtn">New</button>
+      <button type="button" class="btn btn-ghost" id="pngBtn" title="Save the bill as a PNG image">Save PNG</button>
+      <button type="button" class="btn" id="printBtn" disabled>Print</button>
+      <button type="button" class="btn" id="pdfBtn" disabled>Save PDF</button>
+    </div>
+  </header>
+
+  <main class="app" id="app">
+    <section class="form-pane" id="formPane">
+      <details class="card" open id="shopCard">
+        <summary>Shop info <span class="hint">(saved for next time)</span></summary>
+        <div class="card-body">
+          <div class="field">
+            <label for="shopName">Shop name <span class="req">*</span></label>
+            <input type="text" id="shopName" maxlength="120" autocomplete="organization" placeholder="e.g. Sharma Provision Store">
+          </div>
+          <div class="field">
+            <label for="shopAddress">Address</label>
+            <textarea id="shopAddress" rows="2" placeholder="Street, area, city"></textarea>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="shopPhone">Phone</label>
+              <input type="text" id="shopPhone" autocomplete="tel" placeholder="98765 43210">
+            </div>
+            <div class="field">
+              <label for="shopGst">GST / Registration</label>
+              <input type="text" id="shopGst" placeholder="GSTIN: 29ABCDE1234F1Z5">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <section class="card">
+        <h2 class="card-title">Bill details</h2>
+        <div class="card-body">
+          <div class="grid-3">
+            <div class="field">
+              <label for="billNumber">Bill no. <span class="req">*</span></label>
+              <input type="text" id="billNumber" maxlength="40" placeholder="INV-0001">
+            </div>
+            <div class="field">
+              <label for="billDate">Date</label>
+              <input type="date" id="billDate">
+            </div>
+            <div class="field">
+              <label for="customerName">Customer</label>
+              <input type="text" id="customerName" placeholder="Walk-in customer">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Items</h2>
+          <button type="button" class="btn btn-sm btn-ghost" id="addItemBtn">+ Add item</button>
+        </div>
+        <div class="card-body">
+          <div id="items" class="items" role="group" aria-label="Line items"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Totals</h2>
+        <div class="card-body">
+          <div class="grid-2">
+            <div class="field">
+              <label for="discount">Discount (flat amount)</label>
+              <input type="number" id="discount" min="0" step="0.01" value="0">
+              <span class="inline-note" id="discountNote" hidden>discount capped to subtotal</span>
+            </div>
+            <div class="field">
+              <label for="taxPercent">Tax %</label>
+              <input type="number" id="taxPercent" min="0" max="100" step="0.01" value="0">
+              <span class="inline-note" id="taxNote" hidden>tax clamped to 0–100</span>
+            </div>
+          </div>
+          <div class="totals-display" aria-live="polite">
+            <div class="totals-row"><span>Subtotal</span><span id="subtotalVal">0.00</span></div>
+            <div class="totals-row"><span>Taxable</span><span id="taxableVal">0.00</span></div>
+            <div class="totals-row"><span>Tax</span><span id="taxVal">0.00</span></div>
+            <div class="totals-row grand"><span>Grand total</span><span id="grandVal">0.00</span></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section class="preview-pane" id="previewPane">
+      <div class="preview-head">
+        <span>Live preview</span>
+        <span class="preview-hint" id="previewHint">Handwritten</span>
+      </div>
+      <div class="preview-scroll">
+        <div id="preview" class="bill" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- print-only container: holds an exact clone of #preview at page size -->
+  <div id="printArea" aria-hidden="true"></div>
+  <div id="fontNotice" class="font-notice hidden" role="status">
+    <span id="fontNoticeText"></span>
+    <button type="button" class="font-notice-close" id="fontNoticeClose" aria-label="Dismiss notice">&times;</button>
+  </div>
+
+  <script src="js/handwriting.js"></script> <!-- defines window.Handwriting -->
+  <script src="js/app.js"></script>          <!-- depends on window.Handwriting -->
+</body>
+</html>
