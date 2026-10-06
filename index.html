@@ -16,8 +16,8 @@
 
     <div class="toolbar-controls">
       <div class="seg" role="group" aria-label="Bill style">
-        <button type="button" class="seg-btn" id="modeHandwritten" aria-pressed="true">Handwritten</button>
-        <button type="button" class="seg-btn" id="modeComputerized" aria-pressed="false">Computerized</button>
+        <button type="button" class="seg-btn" id="modeHandwritten" aria-pressed="true" tabindex="0">Handwritten</button>
+        <button type="button" class="seg-btn" id="modeComputerized" aria-pressed="false" tabindex="-1">Computerized</button>
       </div>
 
       <label class="field-inline">
@@ -50,7 +50,7 @@
         <div class="card-body">
           <div class="field">
             <label for="shopName">Shop name <span class="req">*</span></label>
-            <input type="text" id="shopName" maxlength="120" autocomplete="organization" placeholder="e.g. Sharma Provision Store">
+            <input type="text" id="shopName" maxlength="120" autocomplete="organization" placeholder="e.g. Sharma Provision Store" required aria-required="true">
           </div>
           <div class="field">
             <label for="shopAddress">Address</label>
@@ -75,7 +75,7 @@
           <div class="grid-3">
             <div class="field">
               <label for="billNumber">Bill no. <span class="req">*</span></label>
-              <input type="text" id="billNumber" maxlength="40" placeholder="INV-0001">
+              <input type="text" id="billNumber" maxlength="40" placeholder="INV-0001" required aria-required="true">
             </div>
             <div class="field">
               <label for="billDate">Date</label>

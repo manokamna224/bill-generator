@@ -294,9 +294,13 @@
   /* ----- Mode UI --------------------------------------------------------- */
   function setModeUI(mode) {
     settings.mode = mode;
-    els.modeHandwritten.setAttribute("aria-pressed", String(mode === "handwritten"));
-    els.modeComputerized.setAttribute("aria-pressed", String(mode === "computerized"));
-    els.rerollBtn.style.display = (mode === "handwritten") ? "" : "none";
+    var isHW = mode === "handwritten";
+    els.modeHandwritten.setAttribute("aria-pressed", String(isHW));
+    els.modeComputerized.setAttribute("aria-pressed", String(!isHW));
+    // Roving tabindex: active button is tabbable, inactive is not
+    els.modeHandwritten.setAttribute("tabindex", isHW ? "0" : "-1");
+    els.modeComputerized.setAttribute("tabindex", isHW ? "-1" : "0");
+    els.rerollBtn.style.display = isHW ? "" : "none";
     els.previewHint.textContent = mode === "computerized" ? "Computerized" : "Handwritten";
   }
 
@@ -423,6 +427,23 @@
     // Toolbar
     els.modeHandwritten.addEventListener("click", function () { setModeUI("handwritten"); renderPreview(); saveSettings(); });
     els.modeComputerized.addEventListener("click", function () { setModeUI("computerized"); renderPreview(); saveSettings(); });
+    // Arrow-key roving tabindex on the segmented control
+    var segBtns = [els.modeHandwritten, els.modeComputerized];
+    segBtns.forEach(function (btn, idx) {
+      btn.addEventListener("keydown", function (e) {
+        var prev = (idx - 1 + segBtns.length) % segBtns.length;
+        var next = (idx + 1) % segBtns.length;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+          e.preventDefault();
+          segBtns[next].focus();
+          segBtns[next].click();
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          e.preventDefault();
+          segBtns[prev].focus();
+          segBtns[prev].click();
+        }
+      });
+    });
     els.paperSize.addEventListener("change", function (e) { settings.paperSize = e.target.value; applyPaper(); renderPreview(); saveSettings(); });
     els.autoIncrement.addEventListener("change", function (e) { settings.autoIncrement = e.target.checked; saveSettings(); });
     els.rerollBtn.addEventListener("click", function () { bill.renderSeed = randSeed(); scheduleSave(); renderPreview(); });

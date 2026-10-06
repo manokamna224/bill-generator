@@ -570,7 +570,29 @@
         '</div>' +
       '</div>';
     container.innerHTML = html;
-    return container.firstChild;
+    var receipt = container.firstChild;
+
+    // Scale-to-fit: if content overflows the paper height, shrink proportionally.
+    // Runs after layout settles so scrollHeight is accurate.
+    if (receipt && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(function () {
+        try {
+          var paperH = receipt.offsetHeight; // CSS aspect-ratio drives this
+          var contentH = receipt.scrollHeight;
+          if (contentH > paperH && paperH > 0) {
+            var scale = Math.max(0.5, paperH / contentH);
+            receipt.style.transformOrigin = "top center";
+            receipt.style.transform = "scale(" + scale.toFixed(4) + ")";
+            receipt.style.marginBottom = ((scale - 1) * paperH).toFixed(0) + "px";
+          } else {
+            receipt.style.transform = "";
+            receipt.style.marginBottom = "";
+          }
+        } catch (err) { /* non-fatal */ }
+      });
+    }
+
+    return receipt;
   }
 
   function capitalize(s) {

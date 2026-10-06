@@ -242,16 +242,23 @@ textarea { resize: vertical; }
   #printArea { display: block !important; }
   html, body { margin: 0; padding: 0; background: #fff; }
   body { font-size: 12pt; }
-  #printArea svg.hw-bill { width: 148mm; height: 210mm; }   /* exact A5 — no overflow sliver */
-  /* Page size driven by body class (paper-a5 / paper-a4). */
-  @page { size: A5; margin: 0; }
+  /* Default A5 SVG size */
+  #printArea svg.hw-bill { width: 148mm; height: 210mm; }
+  /* A4 override — real selector, not invalid media feature */
+  body.paper-a4 #printArea svg.hw-bill { width: 210mm; height: 297mm; }
+  /* Computerized receipt: fill the page width */
+  body.paper-a5 #printArea .receipt { max-width: 100%; width: 148mm; aspect-ratio: unset; }
+  body.paper-a4 #printArea .receipt { max-width: 100%; width: 210mm; aspect-ratio: unset; }
 }
-@media print and (body.paper-a4) {
-  @page { size: A4; margin: 0; }
-  #printArea svg.hw-bill { width: 210mm; height: 297mm; }   /* exact A4 */
+/* Named pages for @page size — must live outside @media print in CSS */
+@page a5page { size: A5; margin: 0; }
+@page a4page { size: A4; margin: 0; }
+@media print {
+  body.paper-a5 { page: a5page; }
+  body.paper-a4 { page: a4page; }
 }
 /* Print-area wrapper centers the single bill and forces exact colors. */
 #printArea { display: none; }
 #printArea .bill { margin: 0 auto; box-shadow: none; border: 0; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-#printArea .receipt { max-width: 100%; width: 100%; border: 0; }
+#printArea .receipt { max-width: 100%; width: 100%; border: 0; overflow: hidden; }
 #printArea svg.hw-bill { display: block; box-shadow: none; }
