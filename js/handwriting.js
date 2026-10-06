@@ -19,6 +19,47 @@
   ];
   var ALL_FAMILIES = [PRIMARY].concat(ALTERNATES);
 
+  /* ----- Language label sets ---------------------------------------------- */
+  var LABELS_EN = {
+    cashMemo: 'CASH MEMO',
+    billNo: 'Bill No: ',
+    date: 'Date: ',
+    customer: 'Customer: ',
+    item: 'Item',
+    qty: 'Qty',
+    unit: 'Unit',
+    rate: 'Rate',
+    amount: 'Amount',
+    subtotal: 'Subtotal: Rs ',
+    discount: 'Discount: -Rs ',
+    tax: 'Tax',
+    grandTotal: 'Grand Total: Rs ',
+    amountInWords: 'Amount in words: ',
+    thanks: 'Thank you! Visit again.',
+    goods: 'Goods once sold will not be taken back.',
+    authSig: 'Authorised Signature'
+  };
+  var LABELS_HI = {
+    cashMemo: 'नकद रसीद',
+    billNo: 'बिल नं.: ',
+    date: 'दिनांक: ',
+    customer: 'ग्राहक: ',
+    item: 'वस्तु',
+    qty: 'मात्रा',
+    unit: 'इकाई',
+    rate: 'दर',
+    amount: 'राशि',
+    subtotal: 'उप-योग: ₹',
+    discount: 'छूट: -₹',
+    tax: 'कर',
+    grandTotal: 'महायोग: ₹',
+    amountInWords: 'शब्दों में: ',
+    thanks: 'धन्यवाद! पुनः पधारें।',
+    goods: 'बेचा गया माल वापस नहीं होगा।',
+    authSig: 'अधिकृत हस्ताक्षर'
+  };
+  var HINDI_FONTS = ['Hind', 'Tiro Devanagari Hindi'];
+
   /* ----- PRNG (mulberry32) + FNV-1a hash ----------------------------------- */
   function mulberry32(a) {
     return function () {
@@ -42,6 +83,16 @@
     return mulberry32(seed);
   }
   function lerp(a, b, t) { return a + (b - a) * t; }
+
+  /* ----- Smooth baseline wobble ------------------------------------------ */
+  function seedWobble(seed, x, lineWidth) {
+    var PI2 = Math.PI * 2;
+    var phase1 = (seed * 0.00173) % PI2;
+    var freq1 = 0.008 + (seed % 7) * 0.0005;
+    var phase2 = (seed * 0.00391) % PI2;
+    var freq2 = 0.013 + (seed % 5) * 0.0006;
+    return Math.sin(x * freq1 + phase1) * 2.5 + Math.sin(x * freq2 + phase2) * 1.5;
+  }
 
   /* ----- Ink colours ------------------------------------------------------- */
   // 70% dark blue, 20% blue-black, 10% blue — pen-in-blue range.
@@ -138,6 +189,7 @@
   }
 
   // Draw a run of text with per-char seeded variation. Returns new x.
+  // KEPT AS DEAD CODE — replaced by drawWords() for all call sites.
   function drawChars(parent, text, x, baselineY, size, rnd, opts) {
     opts = opts || {};
     var primary = opts.primary || effectivePrimary();
@@ -176,20 +228,115 @@
     return x;
   }
 
+  // Word-level rendering — tighter inter-character spacing within words,
+  // smooth baseline wobble via seedWobble(), word-level ink/font variation.
+  // Returns new x after the rendered text.
+  function drawWords(parent, text, x, baselineY, size, rnd, opts) {
+    opts = opts || {};
+    var primary = opts.primary || effectivePrimary();
+    // For Hindi mode, prefer Hind font
+    if (opts.hindiMode) primary = HINDI_FONTS[0];
+    var alts = opts.alternates || loadedAlts();
+    var tight = !!opts.tight; // heading mode: less jitter
+    var numRow = !!opts.numberRow; // numbers: more upright
+    var wobbleSeed = ((opts.wobbleSeed || 0) ^ hash32(String(text))) >>> 0;
+    var lineWidth = opts.lineWidth || 400;
+    var words = String(text).split(/(\s+)/);
+    var _filtCount = 0;
+
+    for (var wi = 0; wi < words.length; wi++) {
+      var token = words[wi];
+      if (/^\s+$/.test(token)) {
+        // whitespace between words
+        x += size * lerp(0.28, 0.42, rnd());
+        continue;
+      }
+      if (!token) continue;
+
+      // Word-level PRNG parameters (consume in fixed order)
+      var wordSize      = size * (tight ? lerp(0.97, 1.02, rnd()) : lerp(0.92, 1.08, rnd()));
+      var wordSkewX     = numRow ? lerp(-1, 1, rnd()) : (tight ? lerp(-2, 1, rnd()) : lerp(-6, 2, rnd()));
+      var wordBaseShift = tight ? lerp(-1.5, 1.5, rnd()) : lerp(-3, 3, rnd());
+      var wordOpacity   = lerp(0.82, 1.0, rnd());
+      var wColorR       = rnd();
+      var wordColor     = wColorR < 0.6 ? '#1a1a6e' : (wColorR < 0.85 ? '#1f2a6b' : '#2244cc');
+      var hasBlur       = (!tight) && rnd() < 0.15;
+      var blurStd       = lerp(0.3, 0.5, rnd());
+      var wordFamily    = primary;
+      if (!opts.hindiMode && rnd() < 0.08 && alts.length) {
+        wordFamily = alts[Math.floor(rnd() * alts.length) % alts.length];
+      } else if (opts.hindiMode) {
+        rnd(); // consume slot to keep seed stable
+      } else {
+        rnd(); // consume slot
+      }
+      // font-weight variation for Caveat (variable font)
+      var wordWeight = (wordFamily === 'Caveat' && rnd() < 0.5) ? '700' : '400';
+
+      // Smooth wobble for this word's horizontal position
+      var wobbleY = seedWobble(wobbleSeed, x, lineWidth);
+
+      // Build word group
+      var wgAttrs = {
+        transform: 'skewX(' + wordSkewX.toFixed(1) + ')',
+        opacity: wordOpacity.toFixed(2)
+      };
+      if (hasBlur && parent.ownerDocument) {
+        var svg = parent;
+        while (svg && svg.tagName !== 'svg') svg = svg.parentNode;
+        var defs = svg ? svg.querySelector('defs') : null;
+        if (defs) {
+          _filtCount++;
+          var fId = 'wblur_' + wobbleSeed + '_' + _filtCount;
+          var fNode = el('filter', { id: fId, x: '-5%', y: '-5%', width: '110%', height: '110%' }, defs);
+          el('feGaussianBlur', { stdDeviation: blurStd.toFixed(2) }, fNode);
+          wgAttrs.filter = 'url(#' + fId + ')';
+        }
+      }
+      var wg = el('g', wgAttrs, parent);
+
+      // Per-character within word
+      for (var ci = 0; ci < token.length; ci++) {
+        var ch = token.charAt(ci);
+        var isNum = /\d/.test(ch);
+        var charR  = tight ? lerp(-1, 1, rnd()) : (isNum ? lerp(-0.5, 0.5, rnd()) : lerp(-2, 2, rnd()));
+        var charDx = lerp(-0.8, 0.8, rnd());
+        var charDy = lerp(-0.8, 0.8, rnd());
+        var charS  = lerp(0.97, 1.03, rnd());
+        var lsf    = lerp(0.88, 0.98, rnd());
+        var w = charWidth(ch, wordFamily, wordSize) || wordSize * 0.55;
+        var tx = x + charDx;
+        var ty = baselineY + wordBaseShift + wobbleY + charDy;
+        var t = 'translate(' + tx.toFixed(2) + ' ' + ty.toFixed(2) + ') rotate(' + charR.toFixed(2) + ') scale(' + charS.toFixed(3) + ')';
+        var tnode = el('text', {
+          'font-family': '"' + wordFamily + '"',
+          'font-size': wordSize,
+          'font-weight': wordWeight,
+          fill: wordColor,
+          'fill-opacity': '1',
+          transform: t
+        }, wg);
+        tnode.textContent = ch;
+        x += w * lsf;
+      }
+    }
+    return x;
+  }
+
   function drawLeft(parent, text, x, baselineY, size, rnd, opts) {
-    return drawChars(parent, text, x, baselineY, size, rnd, opts);
+    return drawWords(parent, text, x, baselineY, size, rnd, opts);
   }
   function drawCentered(parent, text, centerX, baselineY, size, rnd, opts) {
     opts = opts || {};
     var fam = opts.primary || effectivePrimary();
     var w = measureLine(text, fam, size);
-    return drawChars(parent, text, centerX - w / 2, baselineY, size, rnd, opts);
+    return drawWords(parent, text, centerX - w / 2, baselineY, size, rnd, opts);
   }
   function drawRight(parent, text, rightX, baselineY, size, rnd, opts) {
     opts = opts || {};
     var fam = opts.primary || effectivePrimary();
     var w = measureLine(text, fam, size);
-    return drawChars(parent, text, rightX - w, baselineY, size, rnd, opts);
+    return drawWords(parent, text, rightX - w, baselineY, size, rnd, opts);
   }
   // Word-wrap a paragraph; returns the new y (below the last line).
   function drawWrapped(parent, text, x, baselineY, maxWidth, size, rnd, opts) {
@@ -225,8 +372,8 @@
     var t = el("text", { x: 0, y: 7, "font-family": '"Patrick Hand"', "font-size": 27, fill: "#b02a2a", "text-anchor": "middle", "font-weight": "700" }, grp);
     t.textContent = "PAID";
     // uneven inking — small paper-coloured gaps
-    el("rect", { x: lerp(-42, -22, rnd()), y: lerp(-20, -8, rnd()), width: lerp(8, 16, rnd()), height: lerp(3, 7, rnd()), fill: "#fbf6e9", opacity: 0.55 }, grp);
-    el("rect", { x: lerp(8, 30, rnd()), y: lerp(2, 16, rnd()), width: lerp(6, 14, rnd()), height: lerp(3, 6, rnd()), fill: "#fbf6e9", opacity: 0.55 }, grp);
+    el("rect", { x: lerp(-42, -22, rnd()), y: lerp(-20, -8, rnd()), width: lerp(8, 16, rnd()), height: lerp(3, 7, rnd()), fill: "#f5f0e8", opacity: 0.55 }, grp);
+    el("rect", { x: lerp(8, 30, rnd()), y: lerp(2, 16, rnd()), width: lerp(6, 14, rnd()), height: lerp(3, 6, rnd()), fill: "#f5f0e8", opacity: 0.55 }, grp);
   }
 
   function drawSignature(g, bill, rightX, baseY, width) {
@@ -298,6 +445,12 @@
   /* ----- Handwritten renderer -------------------------------------------- */
   function renderHandwritten(container, bill, paperSz, calc) {
     container.innerHTML = "";
+
+    // Language / label selection
+    var lang = (bill && bill.language) || 'en';
+    var L = (lang === 'hi' || lang === 'mixed') ? LABELS_HI : LABELS_EN;
+    var hindiMode = (lang === 'hi' || lang === 'mixed');
+
     var c = calcOf(bill, calc);
     var P = paperSize(paperSz);
     var W = P.W, H = P.H;
@@ -305,6 +458,13 @@
     var contentW = W - M * 2;
     var rightX = W - M;
     var fam = effectivePrimary();
+
+    // Helper: build opts object for all draw calls
+    function dOpts(extra) {
+      var o = Object.assign({ primary: fam, wobbleSeed: (bill && bill.renderSeed) || 0, lineWidth: contentW }, extra || {});
+      if (hindiMode) o.hindiMode = true;
+      return o;
+    }
 
     var svg = el("svg", {
       viewBox: "0 0 " + W + " " + H, class: "hw-bill",
@@ -318,9 +478,17 @@
     el("feTurbulence", { type: "fractalNoise", baseFrequency: "0.9", numOctaves: "2", seed: String(grainSeed), stitchTiles: "stitch", result: "n" }, filt);
     el("feColorMatrix", { type: "saturate", values: "0", in: "n", result: "g" }, filt);
 
-    // background (not tilted)
-    el("rect", { x: 0, y: 0, width: W, height: H, fill: "#fbf6e9" }, svg);
+    // background (not tilted) — aged paper tint #f5f0e8
+    el("rect", { x: 0, y: 0, width: W, height: H, fill: "#f5f0e8" }, svg);
     el("rect", { x: 0, y: 0, width: W, height: H, filter: "url(#grain" + grainSeed + ")", opacity: "0.05" }, svg);
+
+    // Coffee stain — faint aged ellipse on paper surface
+    var csRnd = mulberry32(((bill && bill.renderSeed) || 0) ^ (0xC0FFEE42 >>> 0));
+    var csX = M + contentW * lerp(0.2, 0.8, csRnd());
+    var csY = H * lerp(0.1, 0.7, csRnd());
+    var csRxV = lerp(18, 35, csRnd()), csRyV = lerp(14, 25, csRnd());
+    var csAngle = lerp(-15, 15, csRnd());
+    el('ellipse', { cx: csX.toFixed(1), cy: csY.toFixed(1), rx: csRxV.toFixed(1), ry: csRyV.toFixed(1), fill: '#8B6914', opacity: '0.04', transform: 'rotate(' + csAngle.toFixed(1) + ' ' + csX.toFixed(1) + ' ' + csY.toFixed(1) + ')' }, svg);
 
     // content group (tilted + scale-to-fit)
     var g = el("g", null, svg);
@@ -332,13 +500,28 @@
       el("line", { x1: M, y1: ry, x2: W - M, y2: ry, stroke: "#ece4cf", "stroke-width": 1, opacity: "0.4" }, mr);
     }
 
+    // Ink bleed — faint ellipses at ruled-line / item-row intersections
+    // Add 2-3 bleed dots in the item area at ruled-line y positions
+    var bleedRuledYs = [];
+    for (var bry2 = 150; bry2 < H - bottom - 30; bry2 += 34) {
+      bleedRuledYs.push(bry2);
+    }
+    // Pick a few ruled lines in the item area (indices 3-8 approx) for bleed dots
+    var bleedIndices = [3, 5, 7];
+    bleedIndices.forEach(function (bi) {
+      if (bi < bleedRuledYs.length) {
+        var bx = M + contentW * 0.25;
+        el('ellipse', { cx: bx.toFixed(1), cy: bleedRuledYs[bi], rx: 3, ry: 1.5, fill: '#1a1a2e', opacity: '0.06' }, g);
+      }
+    });
+
     var y = top;
     var rnd;
 
     // Shop name (centered, larger)
     var shopName = (bill.shop && bill.shop.name) || "Your Shop Name";
     rnd = rngFor(bill, "shopname:" + shopName);
-    drawCentered(g, shopName, W / 2, y + 28, 29, rnd, { primary: fam });
+    drawCentered(g, shopName, W / 2, y + 28, 29, rnd, dOpts({ tight: true }));
     y += 42;
 
     // Address lines
@@ -348,18 +531,18 @@
       alines.forEach(function (ln) {
         if (!ln) return;
         rnd = rngFor(bill, "addr:" + ln);
-        drawCentered(g, ln, W / 2, y + 13, 14, rnd, { primary: fam });
+        drawCentered(g, ln, W / 2, y + 13, 14, rnd, dOpts());
         y += 19;
       });
     }
     if (bill.shop && bill.shop.phone) {
       rnd = rngFor(bill, "phone:" + bill.shop.phone);
-      drawCentered(g, "Ph: " + bill.shop.phone, W / 2, y + 13, 14, rnd, { primary: fam });
+      drawCentered(g, "Ph: " + bill.shop.phone, W / 2, y + 13, 14, rnd, dOpts());
       y += 19;
     }
     if (bill.shop && bill.shop.gstOrReg) {
       rnd = rngFor(bill, "gst:" + bill.shop.gstOrReg);
-      drawCentered(g, bill.shop.gstOrReg, W / 2, y + 13, 14, rnd, { primary: fam });
+      drawCentered(g, bill.shop.gstOrReg, W / 2, y + 13, 14, rnd, dOpts());
       y += 19;
     }
 
@@ -368,8 +551,8 @@
     y += 14;
 
     // CASH MEMO title (centered, underscored)
-    rnd = rngFor(bill, "title:CASH MEMO");
-    drawCentered(g, "CASH MEMO", W / 2, y + 22, 25, rnd, { primary: fam });
+    rnd = rngFor(bill, "title:" + L.cashMemo);
+    drawCentered(g, L.cashMemo, W / 2, y + 22, 25, rnd, dOpts({ tight: true }));
     el("line", { x1: W / 2 - 70, y1: y + 30, x2: W / 2 + 70, y2: y + 30, stroke: "#1f2a6b", "stroke-width": 1, opacity: "0.7" }, g);
     y += 40;
 
@@ -378,13 +561,13 @@
     var dt = formatDate((bill.meta && bill.meta.date) || "");
     var cust = (bill.meta && bill.meta.customerName) || "";
     rnd = rngFor(bill, "meta1:bill:" + bn);
-    drawLeft(g, "Bill No: " + bn, M + 8, y + 13, 15, rnd, { primary: fam });
+    drawLeft(g, L.billNo + bn, M + 8, y + 13, 15, rnd, dOpts());
     y += 21;
     rnd = rngFor(bill, "meta2:date:" + dt);
-    drawLeft(g, "Date: " + dt, M + 8, y + 13, 15, rnd, { primary: fam });
+    drawLeft(g, L.date + dt, M + 8, y + 13, 15, rnd, dOpts());
     y += 21;
     rnd = rngFor(bill, "meta3:cust:" + cust);
-    drawLeft(g, "Customer: " + (cust || "—"), M + 8, y + 13, 15, rnd, { primary: fam });
+    drawLeft(g, L.customer + (cust || "—"), M + 8, y + 13, 15, rnd, dOpts());
     y += 22;
 
     // Item table
@@ -396,11 +579,11 @@
     // header row
     rnd = rngFor(bill, "thead");
     el("line", { x1: M, y1: y - 4, x2: rightX, y2: y - 4, stroke: "#1f2a6b", "stroke-width": 0.8, opacity: "0.5" }, g);
-    drawLeft(g, "Item", xName, y + 12, 13, rnd, { primary: fam });
-    drawRight(g, "Qty", xQty + colQty, y + 12, 13, rnd, { primary: fam });
-    drawLeft(g, "Unit", xUnit, y + 12, 13, rnd, { primary: fam });
-    drawRight(g, "Rate", xRate + colRate, y + 12, 13, rnd, { primary: fam });
-    drawRight(g, "Amount", xAmt + colAmt, y + 12, 13, rnd, { primary: fam });
+    drawLeft(g, L.item, xName, y + 12, 13, rnd, dOpts({ tight: true }));
+    drawRight(g, L.qty, xQty + colQty, y + 12, 13, rnd, dOpts({ tight: true }));
+    drawLeft(g, L.unit, xUnit, y + 12, 13, rnd, dOpts({ tight: true }));
+    drawRight(g, L.rate, xRate + colRate, y + 12, 13, rnd, dOpts({ tight: true }));
+    drawRight(g, L.amount, xAmt + colAmt, y + 12, 13, rnd, dOpts({ tight: true }));
     y += 20;
     el("line", { x1: M, y1: y - 6, x2: rightX, y2: y - 6, stroke: "#1f2a6b", "stroke-width": 0.8, opacity: "0.5" }, g);
 
@@ -408,9 +591,14 @@
     var validItems = (bill.items || []).filter(function (it) {
       return it && it.name && it.name.trim() && isFinite(+it.qty) && +it.qty > 0 && isFinite(+it.rate) && +it.rate >= 0;
     });
+
+    // Strikethrough — 5% chance per bill on one random item
+    var strikeRnd = mulberry32(((bill && bill.renderSeed) || 0) ^ 0xDEAD5A1E);
+    var strikeIdx = strikeRnd() < 0.05 ? Math.floor(strikeRnd() * validItems.length) : -1;
+
     if (!validItems.length) {
       rnd = rngFor(bill, "noitems");
-      drawLeft(g, "(no items)", M, y + 14, 14, rnd, { primary: fam });
+      drawLeft(g, "(no items)", M, y + 14, 14, rnd, dOpts());
       y += 24;
     } else {
       validItems.forEach(function (it, idx) {
@@ -418,19 +606,23 @@
         var amount = Math.round((+it.qty * +it.rate + Number.EPSILON) * 100) / 100;
         // name (wrapped)
         rnd = rngFor(bill, "iname" + idx + ":" + it.name);
-        var afterY = drawWrapped(g, it.name, xName, y + 14, nameW, 15, rnd, { primary: fam });
+        var afterY = drawWrapped(g, it.name, xName, y + 14, nameW, 15, rnd, dOpts());
         var linesUsed = Math.max(1, Math.round((afterY - (y + 14)) / (15 * 1.5)) + 1);
         var rowH = Math.max(26, linesUsed * 21);
+        // Strikethrough on item name if selected
+        if (idx === strikeIdx) {
+          el('line', { x1: xName, y1: (rowTop + 14 - 4), x2: xName + nameW * 0.75, y2: (rowTop + 14 - 4), stroke: '#1a1a2e', 'stroke-width': 1.2, opacity: '0.55' }, g);
+        }
         // qty / unit / rate / amount aligned to first line baseline
         var baseY = rowTop + 14;
         rnd = rngFor(bill, "iqty" + idx + ":" + it.qty);
-        drawRight(g, String(+it.qty), xQty + colQty, baseY, 15, rnd, { primary: fam });
+        drawRight(g, String(+it.qty), xQty + colQty, baseY, 15, rnd, dOpts({ numberRow: true }));
         rnd = rngFor(bill, "iunit" + idx + ":" + (it.unit || ""));
-        drawLeft(g, it.unit || "", xUnit, baseY, 15, rnd, { primary: fam });
+        drawLeft(g, it.unit || "", xUnit, baseY, 15, rnd, dOpts());
         rnd = rngFor(bill, "irate" + idx + ":" + it.rate);
-        drawRight(g, formatINR(+it.rate), xRate + colRate, baseY, 15, rnd, { primary: fam });
+        drawRight(g, formatINR(+it.rate), xRate + colRate, baseY, 15, rnd, dOpts({ numberRow: true }));
         rnd = rngFor(bill, "iamt" + idx + ":" + amount);
-        drawRight(g, formatINR(amount), xAmt + colAmt, baseY, 15, rnd, { primary: fam });
+        drawRight(g, formatINR(amount), xAmt + colAmt, baseY, 15, rnd, dOpts({ numberRow: true }));
         el("line", { x1: M, y1: rowTop + rowH - 6, x2: rightX, y2: rowTop + rowH - 6, stroke: "#cbb88a", "stroke-width": 0.7, opacity: "0.5" }, g);
         y = rowTop + rowH;
       });
@@ -439,44 +631,44 @@
     // Totals (right-aligned)
     y += 6;
     rnd = rngFor(bill, "tot:sub");
-    drawRight(g, "Subtotal: Rs " + formatINR(c.subtotal), rightX, y + 13, 14, rnd, { primary: fam });
+    drawRight(g, L.subtotal + formatINR(c.subtotal), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
     y += 20;
     if (c.discount > 0) {
       rnd = rngFor(bill, "tot:disc");
-      drawRight(g, "Discount: -Rs " + formatINR(c.discount), rightX, y + 13, 14, rnd, { primary: fam });
+      drawRight(g, L.discount + formatINR(c.discount), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
       y += 20;
     }
     if (c.taxAmount > 0) {
       rnd = rngFor(bill, "tot:tax");
       var tp = isFinite(+bill.taxPercent) ? +bill.taxPercent : 0;
-      drawRight(g, "Tax (" + tp + "%): Rs " + formatINR(c.taxAmount), rightX, y + 13, 14, rnd, { primary: fam });
+      drawRight(g, L.tax + " (" + tp + "%): Rs " + formatINR(c.taxAmount), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
       y += 20;
     }
     el("line", { x1: rightX - 150, y1: y, x2: rightX, y2: y, stroke: "#1f2a6b", "stroke-width": 1, opacity: "0.7" }, g);
     rnd = rngFor(bill, "tot:grand");
-    drawRight(g, "Grand Total: Rs " + formatINR(c.grandTotal), rightX, y + 18, 20, rnd, { primary: fam });
+    drawRight(g, L.grandTotal + formatINR(c.grandTotal), rightX, y + 18, 20, rnd, dOpts({ numberRow: true, tight: true }));
     y += 28;
 
     // Amount in words (left, wrapped)
     var words = c.words || "";
     if (words) {
       rnd = rngFor(bill, "words:" + words);
-      y = drawWrapped(g, "Amount in words: " + words, M + 8, y + 14, contentW - 16, 14, rnd, { primary: fam });
+      y = drawWrapped(g, L.amountInWords + words, M + 8, y + 14, contentW - 16, 14, rnd, dOpts());
       y += 6;
     }
 
     // Footer (centered) — placed a bit lower
     var footY = Math.max(y + 14, H - 200);
     rnd = rngFor(bill, "foot:thanks");
-    drawCentered(g, "Thank you! Visit again.", W / 2, footY + 13, 14, rnd, { primary: fam });
+    drawCentered(g, L.thanks, W / 2, footY + 13, 14, rnd, dOpts());
     rnd = rngFor(bill, "foot:goods");
-    drawCentered(g, "Goods once sold will not be taken back.", W / 2, footY + 33, 12, rnd, { primary: fam });
+    drawCentered(g, L.goods, W / 2, footY + 33, 12, rnd, dOpts());
 
     // Signature (bottom-right) + label
     var sigBaseY = H - 92;
     drawSignature(g, bill, rightX - 4, sigBaseY, 150);
     rnd = rngFor(bill, "siglabel");
-    drawRight(g, "Authorised Signature", rightX - 4, sigBaseY + 18, 12, rnd, { primary: fam });
+    drawRight(g, L.authSig, rightX - 4, sigBaseY + 18, 12, rnd, dOpts());
 
     // Faux PAID stamp (bottom-right, a touch left of signature)
     drawStamp(g, bill, rightX - 150, H - 70);
@@ -487,7 +679,8 @@
     var avail = H - top - bottom;
     var scale = contentHeight > avail ? Math.min(1, avail / contentHeight) : 1;
     var tiltRnd = mulberry32(((bill && bill.renderSeed) || 0) ^ 0x9E3779B9 >>> 0);
-    var angle = lerp(-0.8, 0.8, tiltRnd());
+    var tiltSign = tiltRnd() < 0.5 ? 1 : -1;
+    var angle = tiltSign * lerp(0.3, 0.8, tiltRnd());
     var cx = W / 2, cy = H / 2;
     g.setAttribute("transform",
       "translate(" + cx + " " + cy + ") rotate(" + angle.toFixed(3) + ") scale(" + scale.toFixed(4) + ") translate(" + (-cx) + " " + (-cy) + ")");
