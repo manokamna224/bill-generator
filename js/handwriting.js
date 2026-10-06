@@ -33,6 +33,7 @@
     subtotal: 'Subtotal: Rs ',
     discount: 'Discount: -Rs ',
     tax: 'Tax',
+    taxCurrency: 'Rs ',
     grandTotal: 'Grand Total: Rs ',
     amountInWords: 'Amount in words: ',
     thanks: 'Thank you! Visit again.',
@@ -52,6 +53,7 @@
     subtotal: 'उप-योग: ₹',
     discount: 'छूट: -₹',
     tax: 'कर',
+    taxCurrency: '₹',
     grandTotal: 'महायोग: ₹',
     amountInWords: 'शब्दों में: ',
     thanks: 'धन्यवाद! पुनः पधारें।',
@@ -641,7 +643,7 @@
     if (c.taxAmount > 0) {
       rnd = rngFor(bill, "tot:tax");
       var tp = isFinite(+bill.taxPercent) ? +bill.taxPercent : 0;
-      drawRight(g, L.tax + " (" + tp + "%): Rs " + formatINR(c.taxAmount), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
+      drawRight(g, L.tax + " (" + tp + "%): " + L.taxCurrency + formatINR(c.taxAmount), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
       y += 20;
     }
     el("line", { x1: rightX - 150, y1: y, x2: rightX, y2: y, stroke: "#1f2a6b", "stroke-width": 1, opacity: "0.7" }, g);
