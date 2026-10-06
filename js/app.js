@@ -19,7 +19,8 @@
   /* ----- Defaults -------------------------------------------------------- */
   var DEFAULT_SETTINGS = {
     mode: "handwritten", paperSize: "A5", autoIncrement: true,
-    defaultUnit: "pcs", defaultTaxPercent: 0, defaultDiscount: 0, lastBillNumber: ""
+    defaultUnit: "pcs", defaultTaxPercent: 0, defaultDiscount: 0, lastBillNumber: "",
+    language: "en"
   };
 
   var settings = Object.assign({}, DEFAULT_SETTINGS);
@@ -36,6 +37,43 @@
     "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
   var TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
   var SCALE = ["", "thousand", "lakh", "crore"];
+
+  /* ----- Amount in words (Hindi, INR) ------------------------------------ */
+  var ONES_HI = ['', 'एक', 'दो', 'तीन', 'चार', 'पाँच', 'छः', 'सात', 'आठ', 'नौ', 'दस', 'ग्यारह', 'बारह', 'तेरह', 'चौदह', 'पंद्रह', 'सोलह', 'सत्रह', 'अठारह', 'उन्नीस'];
+  var TENS_HI  = ['', '', 'बीस', 'तीस', 'चालीस', 'पचास', 'साठ', 'सत्तर', 'अस्सी', 'नब्बे'];
+  var SCALE_HI = ['', 'हजार', 'लाख', 'करोड़'];
+
+  function twoDigitsHi(n) {
+    if (n < 20) return ONES_HI[n];
+    var t = Math.floor(n / 10), u = n % 10;
+    return TENS_HI[t] + (u ? ' ' + ONES_HI[u] : '');
+  }
+  function threeDigitsHi(n) {
+    var h = Math.floor(n / 100), rest = n % 100;
+    var s = h ? ONES_HI[h] + ' सौ' : '';
+    if (rest) s += (h ? ' ' : '') + twoDigitsHi(rest);
+    return s;
+  }
+  function integerWordsHi(n) {
+    if (n === 0) return 'शून्य';
+    var groups = [];
+    groups.push(n % 1000); n = Math.floor(n / 1000);
+    while (n > 0) { groups.push(n % 100); n = Math.floor(n / 100); }
+    var words = threeDigitsHi(groups[0]);
+    for (var i = 1; i < groups.length; i++) {
+      if (groups[i]) words = twoDigitsHi(groups[i]) + ' ' + SCALE_HI[i] + (words ? ' ' + words : '');
+    }
+    return words.trim();
+  }
+  function amountToWordsHi(num) {
+    var neg = num < 0; num = Math.abs(num);
+    var rupees = Math.floor(num + 1e-9);
+    var paise  = Math.round((num - rupees) * 100);
+    var s = 'रुपये ' + integerWordsHi(rupees);
+    if (paise > 0) s += ' और ' + twoDigitsHi(paise) + ' पैसे';
+    s += ' केवल';
+    return (neg ? 'ऋण ' : '') + s.replace(/\s+/g, ' ').trim();
+  }
 
   function twoDigits(n) {
     if (n < 20) return ONES[n];
@@ -92,7 +130,8 @@
       items: [emptyItem()],
       discount: settings.defaultDiscount || 0,
       taxPercent: settings.defaultTaxPercent || 0,
-      renderSeed: randSeed()
+      renderSeed: randSeed(),
+      language: settings.language || 'en'
     };
   }
 
@@ -117,7 +156,8 @@
     if (tp > 100) { tp = 100; taxClamped = true; }
     var taxAmount = round2(taxable * tp / 100);
     var grandTotal = round2(taxable + taxAmount);
-    return { subtotal: subtotal, discount: discount, taxable: taxable, taxAmount: taxAmount, grandTotal: grandTotal, words: amountToWords(grandTotal), tp: tp, discountCapped: discountCapped, taxClamped: taxClamped };
+    var _lang = settings.language || 'en';
+    return { subtotal: subtotal, discount: discount, taxable: taxable, taxAmount: taxAmount, grandTotal: grandTotal, words: (_lang === 'hi' || _lang === 'mixed') ? amountToWordsHi(grandTotal) : amountToWords(grandTotal), tp: tp, discountCapped: discountCapped, taxClamped: taxClamped };
   }
 
   /* ----- DOM refs -------------------------------------------------------- */
@@ -151,7 +191,8 @@
       items: Array.isArray(raw.items) && raw.items.length ? raw.items.map(function (it) { return { name: it.name || "", qty: +it.qty || 1, unit: it.unit || "pcs", rate: +it.rate || 0 }; }) : [emptyItem()],
       discount: +raw.discount || 0,
       taxPercent: +raw.taxPercent || 0,
-      renderSeed: +raw.renderSeed || randSeed()
+      renderSeed: +raw.renderSeed || randSeed(),
+      language: raw.language || settings.language || 'en'
     };
     return b;
   }
@@ -170,6 +211,7 @@
     els.paperSize.value = settings.paperSize || "A5";
     els.autoIncrement.checked = !!settings.autoIncrement;
     setModeUI(settings.mode);
+    setLangUI(settings.language || 'en');
   }
 
   /* ----- Items rendering ------------------------------------------------- */
@@ -267,7 +309,8 @@
       items: bill.items.map(function (it) { return { name: it.name, qty: it.qty, unit: it.unit, rate: it.rate }; }),
       discount: bill.discount,
       taxPercent: bill.taxPercent,
-      renderSeed: bill.renderSeed
+      renderSeed: bill.renderSeed,
+      language: bill.language
     };
     ls.set(KEYS.current, clean);
     ls.set(KEYS.shop, bill.shop);
@@ -289,6 +332,18 @@
     els.pdfBtn.disabled = !ok;
     els.shopName.classList.toggle("invalid", !!(bill.shop && !String(bill.shop.name).trim()) && !ok);
     els.billNumber.classList.toggle("invalid", !!(bill.meta && !String(bill.meta.billNumber).trim()) && !ok);
+  }
+
+  /* ----- Language UI ----------------------------------------------------- */
+  function setLangUI(lang) {
+    var ids = { en: 'langEn', hi: 'langHi', mixed: 'langMixed' };
+    ['langEn', 'langHi', 'langMixed'].forEach(function(id) {
+      var btn = document.getElementById(id);
+      if (!btn) return;
+      var active = (id === ids[lang]);
+      btn.setAttribute('aria-pressed', String(active));
+      btn.setAttribute('tabindex', active ? '0' : '-1');
+    });
   }
 
   /* ----- Mode UI --------------------------------------------------------- */
@@ -383,7 +438,7 @@
     if (document.getElementById("gfFallback")) return;
     var link = document.createElement("link");
     link.id = "gfFallback"; link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Caveat&family=Kalam&family=Indie+Flower&family=Homemade+Apple&family=Gaegu&family=Just+Another+Hand&family=Shadows+Into+Light&display=swap";
+    link.href = "https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Caveat&family=Kalam&family=Indie+Flower&family=Homemade+Apple&family=Gaegu&family=Just+Another+Hand&family=Shadows+Into+Light&family=Hind:wght@400;700&family=Tiro+Devanagari+Hindi&display=swap";
     document.head.appendChild(link);
   }
   function showFontNotice() {
@@ -444,6 +499,28 @@
         }
       });
     });
+    var langBtns = ['langEn', 'langHi', 'langMixed'];
+    langBtns.forEach(function(id, idx) {
+      var btn = document.getElementById(id);
+      if (!btn) return;
+      btn.addEventListener('click', function() {
+        var lang = id === 'langEn' ? 'en' : id === 'langHi' ? 'hi' : 'mixed';
+        bill.language = lang;
+        settings.language = lang;
+        setLangUI(lang);
+        schedulePreview();
+        scheduleSave();
+        saveSettings();
+      });
+      btn.addEventListener('keydown', function(e) {
+        var prev = (idx - 1 + langBtns.length) % langBtns.length;
+        var next = (idx + 1) % langBtns.length;
+        var target = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); target = document.getElementById(langBtns[next]); }
+        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); target = document.getElementById(langBtns[prev]); }
+        if (target) { target.focus(); target.click(); }
+      });
+    });
     els.paperSize.addEventListener("change", function (e) { settings.paperSize = e.target.value; applyPaper(); renderPreview(); saveSettings(); });
     els.autoIncrement.addEventListener("change", function (e) { settings.autoIncrement = e.target.checked; saveSettings(); });
     els.rerollBtn.addEventListener("click", function () { bill.renderSeed = randSeed(); scheduleSave(); renderPreview(); });
@@ -501,5 +578,5 @@
   else init();
 
   // expose a tiny API for the verification harness / debugging
-  window.BillApp = { amountToWords: amountToWords, nextBillNumber: nextBillNumber, computeTotals: computeTotals, round2: round2 };
+  window.BillApp = { amountToWords: amountToWords, amountToWordsHi: amountToWordsHi, nextBillNumber: nextBillNumber, computeTotals: computeTotals, round2: round2 };
 })();
