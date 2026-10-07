@@ -672,24 +672,27 @@
 
     // Column header texts
     var hdrY = y + 15;
-    var hdrStyle = { "font-family": "sans-serif", "font-size": "9", fill: "#1a1a5e", "font-weight": "700", "text-anchor": "middle" };
+    // ES5-safe attr merge helper (local to this block)
+    function hdr(x, yy) {
+      return { "font-family": "sans-serif", "font-size": "9", fill: "#1a1a5e", "font-weight": "700", "text-anchor": "middle", x: x, y: yy };
+    }
 
-    var tQ = el("text", Object.assign({}, hdrStyle, { x: xQnty + wQnty / 2, y: hdrY }), g);
+    var tQ = el("text", hdr(xQnty + wQnty / 2, hdrY), g);
     tQ.textContent = "\u0938\u0902\u0916\u094d\u092f\u093e / QNTY."; // संख्या / QNTY.
 
-    var tP = el("text", Object.assign({}, hdrStyle, { x: xParticulars + wParticulars / 2, y: hdrY }), g);
+    var tP = el("text", hdr(xParticulars + wParticulars / 2, hdrY), g);
     tP.textContent = "\u0935\u093f\u0935\u0930\u0923 / PARTICULARS"; // विवरण / PARTICULARS
 
-    var tR = el("text", Object.assign({}, hdrStyle, { x: xRate + wRate / 2, y: hdrY }), g);
+    var tR = el("text", hdr(xRate + wRate / 2, hdrY), g);
     tR.textContent = "\u0926\u0930 / RATE"; // दर / RATE
 
     // Amount Rs. — two stacked lines
-    var tAR1 = el("text", Object.assign({}, hdrStyle, { x: xAmtRs + wAmtRs / 2, y: y + 10 }), g);
+    var tAR1 = el("text", hdr(xAmtRs + wAmtRs / 2, y + 10), g);
     tAR1.textContent = "\u0930\u0915\u092e"; // रकम
-    var tAR2 = el("text", Object.assign({}, hdrStyle, { x: xAmtRs + wAmtRs / 2, y: y + 20 }), g);
+    var tAR2 = el("text", hdr(xAmtRs + wAmtRs / 2, y + 20), g);
     tAR2.textContent = "Rs.";
 
-    var tAP = el("text", Object.assign({}, hdrStyle, { x: xAmtP + wAmtP / 2, y: hdrY }), g);
+    var tAP = el("text", hdr(xAmtP + wAmtP / 2, hdrY), g);
     tAP.textContent = "P.";
 
     y += 26;
@@ -774,7 +777,7 @@
       x: M + 4, y: emptyRowsBottom + 13,
       "font-family": "sans-serif", "font-size": "9", fill: "#1a1a5e"
     }, g);
-    tThanks.textContent = "\u0927\u0928\u094d\u092f\u0935\u093e\u062a / Thank you"; // धन्यवाद / Thank you
+    tThanks.textContent = "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 / Thank you"; // धन्यवाद / Thank you
     var tEOE = el("text", {
       x: M + 4, y: emptyRowsBottom + 24,
       "font-family": "sans-serif", "font-size": "8", fill: "#1a1a5e"
