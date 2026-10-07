@@ -125,8 +125,20 @@
     }
   }
   function measureLine(text, family, size) {
-    var w = 0;
     text = String(text);
+    // For Devanagari / complex scripts, use Canvas for accurate measurement
+    if (/[\u0900-\u097F]/.test(text)) {
+      try {
+        var _cvs = document.createElement('canvas');
+        var _ctx = _cvs.getContext('2d');
+        if (_ctx) {
+          _ctx.font = '400 ' + size + 'px "' + (family || PRIMARY) + '", Hind, sans-serif';
+          return _ctx.measureText(text).width;
+        }
+      } catch(e) { /* fallback below */ }
+      return text.length * size * 0.6; // heuristic fallback
+    }
+    var w = 0;
     for (var i = 0; i < text.length; i++) {
       var ch = text.charAt(i);
       if (ch === " ") { w += size * 0.3; continue; }
@@ -278,6 +290,43 @@
       // Smooth wobble for this word's horizontal position
       var wobbleY = seedWobble(wobbleSeed, x, lineWidth);
 
+      // ---- HINDI / DEVANAGARI: render whole word as one <text> element ----
+      // Devanagari matras and conjuncts must NOT be split per-character —
+      // doing so detaches vowel signs from their consonants and destroys the script.
+      // Apply only word-level variation (skew, baseline, color, opacity).
+      if (opts.hindiMode) {
+        var ty = baselineY + wordBaseShift + wobbleY;
+        var wgH = el('g', {
+          transform: 'translate(' + x.toFixed(2) + ' ' + ty.toFixed(2) + ') skewX(' + wordSkewX.toFixed(1) + ')',
+          opacity: wordOpacity.toFixed(2)
+        }, parent);
+        var tnode = el('text', {
+          'font-family': '"' + wordFamily + '", "Hind", sans-serif',
+          'font-size': wordSize,
+          'font-weight': wordWeight,
+          fill: wordColor,
+          'fill-opacity': '1',
+          x: '0',
+          y: '0'
+        }, wgH);
+        tnode.textContent = token;
+        // Advance x by estimated word width (use canvas measure if available, else heuristic)
+        var estW = token.length * wordSize * 0.6;
+        if (typeof document !== 'undefined' && document.createElement) {
+          try {
+            var _cvs = document.createElement('canvas');
+            var _ctx = _cvs.getContext('2d');
+            if (_ctx) {
+              _ctx.font = wordWeight + ' ' + wordSize + 'px "' + wordFamily + '", Hind, sans-serif';
+              estW = _ctx.measureText(token).width;
+            }
+          } catch(e) { /* fallback to heuristic */ }
+        }
+        x += estW + size * lerp(0.05, 0.12, rnd()); // small extra gap after word
+        continue; // skip per-character loop
+      }
+
+      // ---- LATIN / NUMERIC: per-character variation (original logic) ----
       // Build word group
       var wgAttrs = {
         transform: 'skewX(' + wordSkewX.toFixed(1) + ')',
@@ -450,242 +499,325 @@
 
     // Language / label selection
     var lang = (bill && bill.language) || 'en';
-    var L = (lang === 'hi' || lang === 'mixed') ? LABELS_HI : LABELS_EN;
     var hindiMode = (lang === 'hi' || lang === 'mixed');
 
     var c = calcOf(bill, calc);
     var P = paperSize(paperSz);
     var W = P.W, H = P.H;
-    var M = 38, top = 46, bottom = 46;
+    var M = 28;
     var contentW = W - M * 2;
-    var rightX = W - M;
     var fam = effectivePrimary();
+
+    // Short date helper — strips year to 2 digits: DD/MM/YY
+    var shortDate = function (iso) {
+      var d = formatDate(iso); // returns DD/MM/YYYY
+      if (d.length === 10) return d.slice(0, 6) + d.slice(8); // DD/MM/YY
+      return d;
+    };
 
     // Helper: build opts object for all draw calls
     function dOpts(extra) {
-      var o = Object.assign({ primary: fam, wobbleSeed: (bill && bill.renderSeed) || 0, lineWidth: contentW }, extra || {});
+      var base = { primary: fam, wobbleSeed: (bill && bill.renderSeed) || 0, lineWidth: contentW };
+      var merged = extra || {};
+      var o = {};
+      for (var k in base) if (Object.prototype.hasOwnProperty.call(base, k)) o[k] = base[k];
+      for (var k2 in merged) if (Object.prototype.hasOwnProperty.call(merged, k2)) o[k2] = merged[k2];
       if (hindiMode) o.hindiMode = true;
       return o;
     }
 
     var svg = el("svg", {
-      viewBox: "0 0 " + W + " " + H, class: "hw-bill",
+      viewBox: "0 0 " + W + " " + H, "class": "hw-bill",
       preserveAspectRatio: "xMidYMid meet", xmlns: SVGNS
     }, container);
 
-    // defs: grain filter
+    // --- 2a: defs — grain filter ---
     var defs = el("defs", null, svg);
     var grainSeed = ((bill && bill.renderSeed) || 0) % 1000;
     var filt = el("filter", { id: "grain" + grainSeed, x: "0", y: "0", width: "100%", height: "100%" }, defs);
     el("feTurbulence", { type: "fractalNoise", baseFrequency: "0.9", numOctaves: "2", seed: String(grainSeed), stitchTiles: "stitch", result: "n" }, filt);
-    el("feColorMatrix", { type: "saturate", values: "0", in: "n", result: "g" }, filt);
+    el("feColorMatrix", { type: "saturate", values: "0", in: "n", result: "g_cm" }, filt);
 
-    // background (not tilted) — aged paper tint #f5f0e8
-    el("rect", { x: 0, y: 0, width: W, height: H, fill: "#f5f0e8" }, svg);
+    // Paper background #fafaf5 (nearly white, like a real Indian cash memo pad)
+    el("rect", { x: 0, y: 0, width: W, height: H, fill: "#fafaf5" }, svg);
     el("rect", { x: 0, y: 0, width: W, height: H, filter: "url(#grain" + grainSeed + ")", opacity: "0.05" }, svg);
 
-    // Coffee stain — faint aged ellipse on paper surface
-    var csRnd = mulberry32(((bill && bill.renderSeed) || 0) ^ (0xC0FFEE42 >>> 0));
-    var csX = M + contentW * lerp(0.2, 0.8, csRnd());
-    var csY = H * lerp(0.1, 0.7, csRnd());
-    var csRxV = lerp(18, 35, csRnd()), csRyV = lerp(14, 25, csRnd());
-    var csAngle = lerp(-15, 15, csRnd());
-    el('ellipse', { cx: csX.toFixed(1), cy: csY.toFixed(1), rx: csRxV.toFixed(1), ry: csRyV.toFixed(1), fill: '#8B6914', opacity: '0.04', transform: 'rotate(' + csAngle.toFixed(1) + ' ' + csX.toFixed(1) + ' ' + csY.toFixed(1) + ')' }, svg);
-
-    // content group (tilted + scale-to-fit)
+    // Main content group — NO tilt transform
     var g = el("g", null, svg);
 
-    // paper ruled lines + margin rule (tilt with content)
-    var mr = el("g", { opacity: "1" }, g);
-    el("line", { x1: M + 4, y1: top - 6, x2: M + 4, y2: H - bottom + 6, stroke: "#e3c9c0", "stroke-width": 1, opacity: "0.35" }, mr);
-    for (var ry = 150; ry < H - bottom - 30; ry += 34) {
-      el("line", { x1: M, y1: ry, x2: W - M, y2: ry, stroke: "#ece4cf", "stroke-width": 1, opacity: "0.4" }, mr);
-    }
+    // --- 2b: Decorative double border ---
+    el("rect", { x: 10, y: 10, width: W - 20, height: H - 20, fill: "none", stroke: "#1a1a5e", "stroke-width": "0.8" }, g);
+    el("rect", { x: 18, y: 18, width: W - 36, height: H - 36, fill: "none", stroke: "#1a1a5e", "stroke-width": "0.6", "stroke-dasharray": "3 4" }, g);
 
-    // Ink bleed — faint ellipses at ruled-line / item-row intersections
-    // Add 2-3 bleed dots in the item area at ruled-line y positions
-    var bleedRuledYs = [];
-    for (var bry2 = 150; bry2 < H - bottom - 30; bry2 += 34) {
-      bleedRuledYs.push(bry2);
-    }
-    // Pick a few ruled lines in the item area (indices 3-8 approx) for bleed dots
-    var bleedIndices = [3, 5, 7];
-    bleedIndices.forEach(function (bi) {
-      if (bi < bleedRuledYs.length) {
-        var bx = M + contentW * 0.25;
-        el('ellipse', { cx: bx.toFixed(1), cy: bleedRuledYs[bi], rx: 3, ry: 1.5, fill: '#1a1a2e', opacity: '0.06' }, g);
-      }
-    });
-
-    var y = top;
+    var y = 32;
     var rnd;
 
-    // Shop name (centered, larger)
-    var shopName = (bill.shop && bill.shop.name) || "Your Shop Name";
-    rnd = rngFor(bill, "shopname:" + shopName);
-    drawCentered(g, shopName, W / 2, y + 28, 29, rnd, dOpts({ tight: true }));
-    y += 42;
-
-    // Address lines
+    // --- 2c: Shop name header (printed SVG text, centered) ---
+    var shopName = (bill.shop && bill.shop.name) || "";
+    if (shopName) {
+      var tShop = el("text", {
+        x: W / 2, y: y + 13,
+        "font-family": "sans-serif", "font-size": "13", fill: "#1a1a5e",
+        "font-weight": "600", "text-anchor": "middle"
+      }, g);
+      tShop.textContent = shopName;
+      y += 18;
+    }
     var addr = (bill.shop && bill.shop.address) || "";
     if (addr) {
       var alines = addr.split("\n");
       alines.forEach(function (ln) {
-        if (!ln) return;
-        rnd = rngFor(bill, "addr:" + ln);
-        drawCentered(g, ln, W / 2, y + 13, 14, rnd, dOpts());
-        y += 19;
+        if (!ln.trim()) return;
+        var ta = el("text", {
+          x: W / 2, y: y + 11,
+          "font-family": "sans-serif", "font-size": "11", fill: "#1a1a5e",
+          "font-weight": "400", "text-anchor": "middle"
+        }, g);
+        ta.textContent = ln;
+        y += 14;
       });
     }
     if (bill.shop && bill.shop.phone) {
-      rnd = rngFor(bill, "phone:" + bill.shop.phone);
-      drawCentered(g, "Ph: " + bill.shop.phone, W / 2, y + 13, 14, rnd, dOpts());
-      y += 19;
+      var tph = el("text", {
+        x: W / 2, y: y + 11,
+        "font-family": "sans-serif", "font-size": "11", fill: "#1a1a5e",
+        "font-weight": "400", "text-anchor": "middle"
+      }, g);
+      tph.textContent = "Ph: " + bill.shop.phone;
+      y += 14;
     }
-    if (bill.shop && bill.shop.gstOrReg) {
-      rnd = rngFor(bill, "gst:" + bill.shop.gstOrReg);
-      drawCentered(g, bill.shop.gstOrReg, W / 2, y + 13, 14, rnd, dOpts());
-      y += 19;
-    }
 
-    // rule under header
-    el("line", { x1: M, y1: y, x2: rightX, y2: y, stroke: "#1f2a6b", "stroke-width": 1.2, opacity: "0.8" }, g);
-    y += 14;
+    // --- 2d: CASH MEMO box ---
+    el("rect", {
+      x: W / 2 - 80, y: y, width: 160, height: 26,
+      fill: "none", stroke: "#1a1a5e", "stroke-width": "1.2"
+    }, g);
+    var tCM = el("text", {
+      x: W / 2, y: y + 18,
+      "font-family": "sans-serif", "font-size": "13", fill: "#1a1a5e",
+      "font-weight": "700", "text-anchor": "middle", "letter-spacing": "2"
+    }, g);
+    tCM.textContent = "CASH MEMO";
+    y += 34;
 
-    // CASH MEMO title (centered, underscored)
-    rnd = rngFor(bill, "title:" + L.cashMemo);
-    drawCentered(g, L.cashMemo, W / 2, y + 22, 25, rnd, dOpts({ tight: true }));
-    el("line", { x1: W / 2 - 70, y1: y + 30, x2: W / 2 + 70, y2: y + 30, stroke: "#1f2a6b", "stroke-width": 1, opacity: "0.7" }, g);
-    y += 40;
-
-    // Meta block (left aligned)
-    var bn = (bill.meta && bill.meta.billNumber) || "—";
-    var dt = formatDate((bill.meta && bill.meta.date) || "");
-    var cust = (bill.meta && bill.meta.customerName) || "";
-    rnd = rngFor(bill, "meta1:bill:" + bn);
-    drawLeft(g, L.billNo + bn, M + 8, y + 13, 15, rnd, dOpts());
-    y += 21;
-    rnd = rngFor(bill, "meta2:date:" + dt);
-    drawLeft(g, L.date + dt, M + 8, y + 13, 15, rnd, dOpts());
-    y += 21;
-    rnd = rngFor(bill, "meta3:cust:" + cust);
-    drawLeft(g, L.customer + (cust || "—"), M + 8, y + 13, 15, rnd, dOpts());
+    // --- 2e: "Bought of" and "Sold to" rows ---
+    // Row 1 — vendor row (decoration only)
+    var tBought = el("text", {
+      x: M, y: y + 14,
+      "font-family": "sans-serif", "font-size": "11", fill: "#1a1a5e"
+    }, g);
+    tBought.textContent = "Bought of \u0935\u093f\u0915\u094d\u0930\u0947\u0924\u093e"; // विक्रेता
+    el("line", { x1: M + 115, y1: y + 15, x2: W - M, y2: y + 15, stroke: "#1a1a5e", "stroke-width": "0.6" }, g);
     y += 22;
 
-    // Item table
-    // columns: Name (flex), Qty(36), Unit(44), Rate(64), Amount(78)
-    var colQty = 36, colUnit = 44, colRate = 64, colAmt = 78;
-    var nameW = contentW - (colQty + colUnit + colRate + colAmt);
-    var xName = M, xQty = xName + nameW, xUnit = xQty + colQty, xRate = xUnit + colUnit, xAmt = xRate + colRate;
+    // Row 2 — customer row
+    var tSold = el("text", {
+      x: M, y: y + 14,
+      "font-family": "sans-serif", "font-size": "11", fill: "#1a1a5e"
+    }, g);
+    tSold.textContent = "Sold to \u0915\u094d\u0930\u0947\u0924\u093e"; // क्रेता
+    el("line", { x1: M + 95, y1: y + 15, x2: W - M, y2: y + 15, stroke: "#1a1a5e", "stroke-width": "0.6" }, g);
+    var customerName = (bill.meta && bill.meta.customerName) || "";
+    if (customerName) {
+      rnd = rngFor(bill, "cust:" + customerName);
+      drawLeft(g, customerName, M + 98, y + 13, 13, rnd, dOpts());
+    }
+    y += 22;
 
-    // header row
-    rnd = rngFor(bill, "thead");
-    el("line", { x1: M, y1: y - 4, x2: rightX, y2: y - 4, stroke: "#1f2a6b", "stroke-width": 0.8, opacity: "0.5" }, g);
-    drawLeft(g, L.item, xName, y + 12, 13, rnd, dOpts({ tight: true }));
-    drawRight(g, L.qty, xQty + colQty, y + 12, 13, rnd, dOpts({ tight: true }));
-    drawLeft(g, L.unit, xUnit, y + 12, 13, rnd, dOpts({ tight: true }));
-    drawRight(g, L.rate, xRate + colRate, y + 12, 13, rnd, dOpts({ tight: true }));
-    drawRight(g, L.amount, xAmt + colAmt, y + 12, 13, rnd, dOpts({ tight: true }));
-    y += 20;
-    el("line", { x1: M, y1: y - 6, x2: rightX, y2: y - 6, stroke: "#1f2a6b", "stroke-width": 0.8, opacity: "0.5" }, g);
+    // --- 2f: Bill No / Date header row ---
+    var halfBoxW = Math.floor(W * 0.4);
+    var fullBoxW = (W - 2 * M);
+    el("rect", { x: M, y: y, width: halfBoxW, height: 24, fill: "none", stroke: "#1a1a5e", "stroke-width": "0.8" }, g);
+    el("rect", { x: M + halfBoxW, y: y, width: fullBoxW - halfBoxW, height: 24, fill: "none", stroke: "#1a1a5e", "stroke-width": "0.8" }, g);
 
-    // item rows
+    var tBillNoLbl = el("text", {
+      x: M + 4, y: y + 16,
+      "font-family": "sans-serif", "font-size": "10", fill: "#1a1a5e"
+    }, g);
+    tBillNoLbl.textContent = "\u0915\u094d\u0930\u092e\u093e\u0902\u0915 / No."; // क्रमांक / No.
+    var tDateLbl = el("text", {
+      x: M + halfBoxW + 4, y: y + 16,
+      "font-family": "sans-serif", "font-size": "10", fill: "#1a1a5e"
+    }, g);
+    tDateLbl.textContent = "\u0924\u093f\u0925\u093f / Date"; // तिथि / Date
+
+    var bn = (bill.meta && bill.meta.billNumber) || "\u2014";
+    rnd = rngFor(bill, "meta:bn:" + bn);
+    drawRight(g, bn, M + halfBoxW - 4, y + 17, 13, rnd, dOpts({ numberRow: true }));
+
+    var dateStr = shortDate((bill.meta && bill.meta.date) || "");
+    rnd = rngFor(bill, "meta:date:" + dateStr);
+    drawRight(g, dateStr, W - M - 4, y + 17, 13, rnd, dOpts({ numberRow: true }));
+
+    y += 28;
+
+    // --- 2g: Column header row ---
+    var xQnty        = M;
+    var wQnty        = Math.floor(W * 0.10);
+    var xParticulars = M + wQnty;
+    var wParticulars = Math.floor(W * 0.43);
+    var xRate        = xParticulars + wParticulars;
+    var wRate        = Math.floor(W * 0.15);
+    var xAmtRs       = xRate + wRate;
+    var wAmtRs       = Math.floor(W * 0.18);
+    var xAmtP        = xAmtRs + wAmtRs;
+    var wAmtP        = (W - M) - xAmtP;
+
+    var dividers = [xParticulars, xRate, xAmtRs, xAmtP];
+
+    el("rect", {
+      x: M, y: y, width: W - 2 * M, height: 22,
+      fill: "#e8e8f0", stroke: "#1a1a5e", "stroke-width": "0.8"
+    }, g);
+
+    // Column header texts
+    var hdrY = y + 15;
+    var hdrStyle = { "font-family": "sans-serif", "font-size": "9", fill: "#1a1a5e", "font-weight": "700", "text-anchor": "middle" };
+
+    var tQ = el("text", Object.assign({}, hdrStyle, { x: xQnty + wQnty / 2, y: hdrY }), g);
+    tQ.textContent = "\u0938\u0902\u0916\u094d\u092f\u093e / QNTY."; // संख्या / QNTY.
+
+    var tP = el("text", Object.assign({}, hdrStyle, { x: xParticulars + wParticulars / 2, y: hdrY }), g);
+    tP.textContent = "\u0935\u093f\u0935\u0930\u0923 / PARTICULARS"; // विवरण / PARTICULARS
+
+    var tR = el("text", Object.assign({}, hdrStyle, { x: xRate + wRate / 2, y: hdrY }), g);
+    tR.textContent = "\u0926\u0930 / RATE"; // दर / RATE
+
+    // Amount Rs. — two stacked lines
+    var tAR1 = el("text", Object.assign({}, hdrStyle, { x: xAmtRs + wAmtRs / 2, y: y + 10 }), g);
+    tAR1.textContent = "\u0930\u0915\u092e"; // रकम
+    var tAR2 = el("text", Object.assign({}, hdrStyle, { x: xAmtRs + wAmtRs / 2, y: y + 20 }), g);
+    tAR2.textContent = "Rs.";
+
+    var tAP = el("text", Object.assign({}, hdrStyle, { x: xAmtP + wAmtP / 2, y: hdrY }), g);
+    tAP.textContent = "P.";
+
+    y += 26;
+    var gridTop = y;
+
+    // --- 2h: Item rows ---
+    var rowH = 22;
+    var emptyRowCount = 8;
+
     var validItems = (bill.items || []).filter(function (it) {
       return it && it.name && it.name.trim() && isFinite(+it.qty) && +it.qty > 0 && isFinite(+it.rate) && +it.rate >= 0;
     });
 
-    // Strikethrough — 5% chance per bill on one random item
-    var strikeRnd = mulberry32(((bill && bill.renderSeed) || 0) ^ 0xDEAD5A1E);
-    var strikeIdx = strikeRnd() < 0.05 ? Math.floor(strikeRnd() * validItems.length) : -1;
-
     if (!validItems.length) {
-      rnd = rngFor(bill, "noitems");
-      drawLeft(g, "(no items)", M, y + 14, 14, rnd, dOpts());
-      y += 24;
+      // Draw at least one blank row placeholder line
+      el("line", { x1: M, y1: y + rowH, x2: W - M, y2: y + rowH, stroke: "#1a1a5e", "stroke-width": "0.5", opacity: "0.5" }, g);
+      y += rowH;
     } else {
       validItems.forEach(function (it, idx) {
-        var rowTop = y;
         var amount = Math.round((+it.qty * +it.rate + Number.EPSILON) * 100) / 100;
-        // name (wrapped)
-        rnd = rngFor(bill, "iname" + idx + ":" + it.name);
-        var afterY = drawWrapped(g, it.name, xName, y + 14, nameW, 15, rnd, dOpts());
-        var linesUsed = Math.max(1, Math.round((afterY - (y + 14)) / (15 * 1.5)) + 1);
-        var rowH = Math.max(26, linesUsed * 21);
-        // Strikethrough on item name if selected
-        if (idx === strikeIdx) {
-          el('line', { x1: xName, y1: (rowTop + 14 - 4), x2: xName + nameW * 0.75, y2: (rowTop + 14 - 4), stroke: '#1a1a2e', 'stroke-width': 1.2, opacity: '0.55' }, g);
-        }
-        // qty / unit / rate / amount aligned to first line baseline
-        var baseY = rowTop + 14;
+        // horizontal bottom rule
+        el("line", { x1: M, y1: y + rowH, x2: W - M, y2: y + rowH, stroke: "#1a1a5e", "stroke-width": "0.5", opacity: "0.5" }, g);
+        // handwritten qty
         rnd = rngFor(bill, "iqty" + idx + ":" + it.qty);
-        drawRight(g, String(+it.qty), xQty + colQty, baseY, 15, rnd, dOpts({ numberRow: true }));
-        rnd = rngFor(bill, "iunit" + idx + ":" + (it.unit || ""));
-        drawLeft(g, it.unit || "", xUnit, baseY, 15, rnd, dOpts());
+        drawCentered(g, String(+it.qty), xQnty + wQnty / 2, y + 16, 13, rnd, dOpts({ numberRow: true }));
+        // handwritten item name
+        rnd = rngFor(bill, "iname" + idx + ":" + it.name);
+        drawLeft(g, it.name, xParticulars + 3, y + 16, 13, rnd, dOpts());
+        // handwritten rate
         rnd = rngFor(bill, "irate" + idx + ":" + it.rate);
-        drawRight(g, formatINR(+it.rate), xRate + colRate, baseY, 15, rnd, dOpts({ numberRow: true }));
+        drawRight(g, formatINR(+it.rate), xRate + wRate - 3, y + 16, 13, rnd, dOpts({ numberRow: true }));
+        // handwritten amount Rs. part
+        var amtStr = formatINR(amount).split(".")[0];
         rnd = rngFor(bill, "iamt" + idx + ":" + amount);
-        drawRight(g, formatINR(amount), xAmt + colAmt, baseY, 15, rnd, dOpts({ numberRow: true }));
-        el("line", { x1: M, y1: rowTop + rowH - 6, x2: rightX, y2: rowTop + rowH - 6, stroke: "#cbb88a", "stroke-width": 0.7, opacity: "0.5" }, g);
-        y = rowTop + rowH;
+        drawRight(g, amtStr, xAmtRs + wAmtRs - 3, y + 16, 13, rnd, dOpts({ numberRow: true }));
+        // paise cell
+        rnd = rngFor(bill, "ipaise" + idx);
+        drawCentered(g, "-", xAmtP + wAmtP / 2, y + 16, 12, rnd, dOpts({ tight: true }));
+        y += rowH;
       });
     }
 
-    // Totals (right-aligned)
-    y += 6;
-    rnd = rngFor(bill, "tot:sub");
-    drawRight(g, L.subtotal + formatINR(c.subtotal), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
-    y += 20;
-    if (c.discount > 0) {
-      rnd = rngFor(bill, "tot:disc");
-      drawRight(g, L.discount + formatINR(c.discount), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
-      y += 20;
-    }
-    if (c.taxAmount > 0) {
-      rnd = rngFor(bill, "tot:tax");
-      var tp = isFinite(+bill.taxPercent) ? +bill.taxPercent : 0;
-      drawRight(g, L.tax + " (" + tp + "%): " + L.taxCurrency + formatINR(c.taxAmount), rightX, y + 13, 14, rnd, dOpts({ numberRow: true }));
-      y += 20;
-    }
-    el("line", { x1: rightX - 150, y1: y, x2: rightX, y2: y, stroke: "#1f2a6b", "stroke-width": 1, opacity: "0.7" }, g);
-    rnd = rngFor(bill, "tot:grand");
-    drawRight(g, L.grandTotal + formatINR(c.grandTotal), rightX, y + 18, 20, rnd, dOpts({ numberRow: true, tight: true }));
-    y += 28;
-
-    // Amount in words (left, wrapped)
-    var words = c.words || "";
-    if (words) {
-      rnd = rngFor(bill, "words:" + words);
-      y = drawWrapped(g, L.amountInWords + words, M + 8, y + 14, contentW - 16, 14, rnd, dOpts());
-      y += 6;
+    // 8 blank ruled rows after items
+    for (var er = 0; er < emptyRowCount; er++) {
+      el("line", { x1: M, y1: y + rowH, x2: W - M, y2: y + rowH, stroke: "#1a1a5e", "stroke-width": "0.5", opacity: "0.4" }, g);
+      y += rowH;
     }
 
-    // Footer (centered) — placed a bit lower
-    var footY = Math.max(y + 14, H - 200);
-    rnd = rngFor(bill, "foot:thanks");
-    drawCentered(g, L.thanks, W / 2, footY + 13, 14, rnd, dOpts());
-    rnd = rngFor(bill, "foot:goods");
-    drawCentered(g, L.goods, W / 2, footY + 33, 12, rnd, dOpts());
+    var emptyRowsBottom = y;
 
-    // Signature (bottom-right) + label
-    var sigBaseY = H - 92;
-    drawSignature(g, bill, rightX - 4, sigBaseY, 150);
-    rnd = rngFor(bill, "siglabel");
-    drawRight(g, L.authSig, rightX - 4, sigBaseY + 18, 12, rnd, dOpts());
+    // --- 2i: Vertical column dividers (full height, gridTop to emptyRowsBottom) ---
+    dividers.forEach(function (xd) {
+      el("line", { x1: xd, y1: gridTop, x2: xd, y2: emptyRowsBottom, stroke: "#1a1a5e", "stroke-width": "0.6", opacity: "0.8" }, g);
+    });
+    // Left and right outer vertical borders of grid
+    el("line", { x1: M, y1: gridTop, x2: M, y2: emptyRowsBottom, stroke: "#1a1a5e", "stroke-width": "0.8" }, g);
+    el("line", { x1: W - M, y1: gridTop, x2: W - M, y2: emptyRowsBottom, stroke: "#1a1a5e", "stroke-width": "0.8" }, g);
+    // Top border of grid
+    el("line", { x1: M, y1: gridTop, x2: W - M, y2: gridTop, stroke: "#1a1a5e", "stroke-width": "0.8" }, g);
 
-    // Faux PAID stamp (bottom-right, a touch left of signature)
-    drawStamp(g, bill, rightX - 150, H - 70);
+    // --- 2j: Diagonal signature scrawl in empty rows area ---
+    var scrawlCX = M + (W - 2 * M) * 0.55;
+    var scrawlCY = gridTop + (validItems.length * rowH) + (emptyRowCount * rowH * 0.5);
+    var scrawlW  = Math.min(W - 2 * M - 30, 220);
+    var sigG = el("g", {
+      transform: "rotate(-18 " + scrawlCX.toFixed(1) + " " + scrawlCY.toFixed(1) + ")",
+      opacity: "0.55"
+    }, g);
+    drawSignature(sigG, bill, scrawlCX + scrawlW / 2, scrawlCY, scrawlW);
+    drawSignature(sigG, bill, scrawlCX + scrawlW / 2 + 8, scrawlCY + 6, scrawlW * 0.7);
 
-    // ----- tilt + scale-to-fit -----
-    var contentBottom = H - 40; // stamp/signature already near bottom
-    var contentHeight = contentBottom - top;
-    var avail = H - top - bottom;
-    var scale = contentHeight > avail ? Math.min(1, avail / contentHeight) : 1;
-    var tiltRnd = mulberry32(((bill && bill.renderSeed) || 0) ^ 0x9E3779B9 >>> 0);
-    var tiltSign = tiltRnd() < 0.5 ? 1 : -1;
-    var angle = tiltSign * lerp(0.3, 0.8, tiltRnd());
-    var cx = W / 2, cy = H / 2;
-    g.setAttribute("transform",
-      "translate(" + cx + " " + cy + ") rotate(" + angle.toFixed(3) + ") scale(" + scale.toFixed(4) + ") translate(" + (-cx) + " " + (-cy) + ")");
+    // --- 2k: Footer separator and footer row ---
+    el("line", { x1: M, y1: emptyRowsBottom, x2: W - M, y2: emptyRowsBottom, stroke: "#1a1a5e", "stroke-width": "1.2" }, g);
+
+    el("rect", {
+      x: M, y: emptyRowsBottom, width: W - 2 * M, height: 34,
+      fill: "none", stroke: "#1a1a5e", "stroke-width": "0.8"
+    }, g);
+
+    // Left zone — printed labels
+    var tThanks = el("text", {
+      x: M + 4, y: emptyRowsBottom + 13,
+      "font-family": "sans-serif", "font-size": "9", fill: "#1a1a5e"
+    }, g);
+    tThanks.textContent = "\u0927\u0928\u094d\u092f\u0935\u093e\u062a / Thank you"; // धन्यवाद / Thank you
+    var tEOE = el("text", {
+      x: M + 4, y: emptyRowsBottom + 24,
+      "font-family": "sans-serif", "font-size": "8", fill: "#1a1a5e"
+    }, g);
+    tEOE.textContent = "\u092d\u0942\u0932-\u091a\u0942\u0915 \u0932\u0947\u0928\u0940 \u0926\u0947\u0928\u0940 E.&O.E."; // भूल-चूक लेनी देनी E.&O.E.
+
+    // Middle zone — printed TOTAL label and divider
+    el("line", { x1: xRate, y1: emptyRowsBottom, x2: xRate, y2: emptyRowsBottom + 34, stroke: "#1a1a5e", "stroke-width": "0.6" }, g);
+    var tTotal = el("text", {
+      x: xRate + 4, y: emptyRowsBottom + 20,
+      "font-family": "sans-serif", "font-size": "10", fill: "#1a1a5e", "font-weight": "700"
+    }, g);
+    tTotal.textContent = "\u091c\u094b\u0921\u093c / TOTAL"; // जोड़ / TOTAL
+
+    // Right zone divider at xAmtRs
+    el("line", { x1: xAmtRs, y1: emptyRowsBottom, x2: xAmtRs, y2: emptyRowsBottom + 34, stroke: "#1a1a5e", "stroke-width": "0.6" }, g);
+
+    // Handwritten total (large, prominent)
+    var totalStr = formatINR(c.grandTotal).split(".")[0] + ".-";
+    rnd = rngFor(bill, "footer:total:" + c.grandTotal);
+    drawRight(g, totalStr, W - M - 4, emptyRowsBottom + 24, 18, rnd, dOpts({ numberRow: true, tight: true }));
+
+    y = emptyRowsBottom + 38;
+
+    // --- 2l: "Goods once sold" printed line and bottom signature ---
+    var tGoods = el("text", {
+      x: W / 2, y: y + 12,
+      "font-family": "sans-serif", "font-size": "9", fill: "#1a1a5e",
+      "text-anchor": "middle", "font-style": "italic"
+    }, g);
+    tGoods.textContent = "Goods once sold will not be taken back.";
+
+    var sigBaseY = y + 32;
+    el("text", {
+      x: W - M - 4, y: sigBaseY + 16,
+      "font-size": "9", fill: "#1a1a5e",
+      "font-family": "sans-serif", "text-anchor": "end"
+    }, g).textContent = "Signature";
+    el("line", {
+      x1: W - M - 130, y1: sigBaseY + 2, x2: W - M - 4, y2: sigBaseY + 2,
+      stroke: "#1a1a5e", "stroke-width": "0.6"
+    }, g);
+    drawSignature(g, bill, W - M - 4, sigBaseY - 2, 120);
 
     return svg;
   }
