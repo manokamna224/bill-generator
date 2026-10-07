@@ -73,6 +73,16 @@
               <input type="text" id="shopGst" placeholder="GSTIN: 29ABCDE1234F1Z5">
             </div>
           </div>
+          <div class="field sig-upload-field">
+            <label for="sigUpload">Authorised Signature <span class="hint">(optional image — PNG/JPG, transparent background recommended)</span></label>
+            <div class="sig-upload-wrap">
+              <input type="file" id="sigUpload" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml">
+              <div id="sigPreviewWrap" class="sig-preview-wrap hidden">
+                <img id="sigPreviewImg" class="sig-preview-img" alt="Signature preview">
+                <button type="button" id="sigClearBtn" class="btn btn-ghost btn-sm" title="Remove signature">✕ Remove</button>
+              </div>
+            </div>
+          </div>
         </div>
       </details>
 

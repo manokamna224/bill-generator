@@ -820,7 +820,20 @@
       x1: W - M - 130, y1: sigBaseY + 2, x2: W - M - 4, y2: sigBaseY + 2,
       stroke: "#1a1a5e", "stroke-width": "0.6"
     }, g);
-    drawSignature(g, bill, W - M - 4, sigBaseY - 2, 120);
+    // If a signature image was uploaded, render it; otherwise draw the scrawl
+    if (bill.shop && bill.shop.signatureImage) {
+      var sigImgW = 110, sigImgH = 36;
+      el("image", {
+        href: bill.shop.signatureImage,
+        x: W - M - 4 - sigImgW,
+        y: sigBaseY - sigImgH + 2,
+        width: sigImgW,
+        height: sigImgH,
+        preserveAspectRatio: "xMidYMid meet"
+      }, g);
+    } else {
+      drawSignature(g, bill, W - M - 4, sigBaseY - 2, 120);
+    }
 
     return svg;
   }
@@ -896,7 +909,12 @@
         wordsHtml +
         '<div class="r-foot">' +
           '<div class="r-thanks">Thank you! Visit again.</div>' +
-          '<div class="r-sig"><div class="r-line"></div><div class="r-label">Authorised Signature</div></div>' +
+          '<div class="r-sig">' +
+            (bill.shop && bill.shop.signatureImage
+              ? '<img class="r-sig-img" src="' + bill.shop.signatureImage + '" alt="Authorised Signature">'
+              : '<div class="r-line"></div>') +
+            '<div class="r-label">Authorised Signature</div>' +
+          '</div>' +
         '</div>' +
       '</div>';
     container.innerHTML = html;

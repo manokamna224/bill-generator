@@ -125,7 +125,7 @@
     if (settings.autoIncrement) bn = nextBillNumber(settings.lastBillNumber || "");
     else bn = settings.lastBillNumber || "";
     return {
-      shop: shop ? { name: shop.name || "", address: shop.address || "", phone: shop.phone || "", gstOrReg: shop.gstOrReg || "" } : { name: "", address: "", phone: "", gstOrReg: "" },
+      shop: shop ? { name: shop.name || "", address: shop.address || "", phone: shop.phone || "", gstOrReg: shop.gstOrReg || "", signatureImage: shop.signatureImage || "" } : { name: "", address: "", phone: "", gstOrReg: "", signatureImage: "" },
       meta: { billNumber: bn, date: todayISO(), customerName: "" },
       items: [emptyItem()],
       discount: settings.defaultDiscount || 0,
@@ -166,7 +166,8 @@
     ["toolbar", "formPane", "previewPane", "preview", "printArea", "fontNotice", "fontNoticeText", "fontNoticeClose",
      "modeHandwritten", "modeComputerized", "paperSize", "autoIncrement", "rerollBtn", "newBtn", "pngBtn", "printBtn", "pdfBtn",
      "shopName", "shopAddress", "shopPhone", "shopGst", "billNumber", "billDate", "customerName", "discount", "taxPercent",
-     "subtotalVal", "taxableVal", "taxVal", "grandVal", "discountNote", "taxNote", "items", "addItemBtn", "previewHint"]
+     "subtotalVal", "taxableVal", "taxVal", "grandVal", "discountNote", "taxNote", "items", "addItemBtn", "previewHint",
+     "sigUpload", "sigPreviewWrap", "sigPreviewImg", "sigClearBtn"]
       .forEach(function (id) { els[id] = document.getElementById(id); });
   }
 
@@ -186,7 +187,7 @@
   function normalizeBill(raw, savedShop) {
     var shop = raw.shop || savedShop || {};
     var b = {
-      shop: { name: shop.name || "", address: shop.address || "", phone: shop.phone || "", gstOrReg: shop.gstOrReg || "" },
+      shop: { name: shop.name || "", address: shop.address || "", phone: shop.phone || "", gstOrReg: shop.gstOrReg || "", signatureImage: shop.signatureImage || "" },
       meta: { billNumber: (raw.meta && raw.meta.billNumber) || "", date: (raw.meta && raw.meta.date) || todayISO(), customerName: (raw.meta && raw.meta.customerName) || "" },
       items: Array.isArray(raw.items) && raw.items.length ? raw.items.map(function (it) { return { name: it.name || "", qty: +it.qty || 1, unit: it.unit || "pcs", rate: +it.rate || 0 }; }) : [emptyItem()],
       discount: +raw.discount || 0,
@@ -210,6 +211,8 @@
     els.taxPercent.value = bill.taxPercent || 0;
     els.paperSize.value = settings.paperSize || "A5";
     els.autoIncrement.checked = !!settings.autoIncrement;
+    // Signature preview
+    updateSigPreview(bill.shop.signatureImage || "");
     setModeUI(settings.mode);
     setLangUI(settings.language || 'en');
   }
@@ -447,12 +450,45 @@
   }
 
   /* ----- Event wiring ---------------------------------------------------- */
+  /* ----- Signature image helper ----------------------------------------- */
+  function updateSigPreview(dataUrl) {
+    if (dataUrl) {
+      els.sigPreviewImg.src = dataUrl;
+      els.sigPreviewWrap.classList.remove("hidden");
+    } else {
+      els.sigPreviewImg.src = "";
+      els.sigPreviewWrap.classList.add("hidden");
+    }
+    // Clear the file input value so re-uploading the same file fires change again
+    if (!dataUrl && els.sigUpload) els.sigUpload.value = "";
+  }
+
   function wireEvents() {
     // Shop / bill fields
     els.shopName.addEventListener("input", function (e) { bill.shop.name = e.target.value; schedulePreview(); scheduleSave(); updatePrintEnabled(); });
     els.shopAddress.addEventListener("input", function (e) { bill.shop.address = e.target.value; schedulePreview(); scheduleSave(); });
     els.shopPhone.addEventListener("input", function (e) { bill.shop.phone = e.target.value; schedulePreview(); scheduleSave(); });
     els.shopGst.addEventListener("input", function (e) { bill.shop.gstOrReg = e.target.value; schedulePreview(); scheduleSave(); });
+
+    // Signature upload
+    els.sigUpload.addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (ev) {
+        bill.shop.signatureImage = ev.target.result;
+        updateSigPreview(bill.shop.signatureImage);
+        schedulePreview();
+        scheduleSave();
+      };
+      reader.readAsDataURL(file);
+    });
+    els.sigClearBtn.addEventListener("click", function () {
+      bill.shop.signatureImage = "";
+      updateSigPreview("");
+      schedulePreview();
+      scheduleSave();
+    });
     els.billNumber.addEventListener("input", function (e) { bill.meta.billNumber = e.target.value; schedulePreview(); scheduleSave(); updatePrintEnabled(); });
     els.billDate.addEventListener("input", function (e) { bill.meta.date = e.target.value; schedulePreview(); scheduleSave(); });
     els.billDate.addEventListener("change", function (e) { if (!e.target.value || !/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) { var t = todayISO(); bill.meta.date = t; e.target.value = t; schedulePreview(); scheduleSave(); } });
